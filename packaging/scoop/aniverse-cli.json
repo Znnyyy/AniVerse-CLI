@@ -1,0 +1,20 @@
+{
+  "version": "0.3.0",
+  "description": "AniVerse-CLI: nonton anime & film dari terminal (Idlix, Otakudesu, Samehadaku, Kusonime) dengan pemutaran MPV/VLC.",
+  "homepage": "https://github.com/yuutaa7x/AniVerse-CLI",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/yuutaa7x/AniVerse-CLI/releases/download/v0.3.0/aniverse-cli-windows-x86_64.zip",
+      "hash": "ISI_DENGAN_SHA256_HASIL_RELEASE"
+    }
+  },
+  "bin": "aniverse-cli.exe",
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/yuutaa7x/AniVerse-CLI/releases/download/v$version/aniverse-cli-windows-x86_64.zip"
+      }
+    }
+  }
+}
