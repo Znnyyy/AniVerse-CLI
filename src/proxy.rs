@@ -1,0 +1,258 @@
+use tokio::net::{TcpListener, TcpStream};
+use tokio::io::AsyncWriteExt;
+
+pub async fn start_proxy(provider_id: usize) -> anyhow::Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let _ = handle_connection(&mut socket, port, provider_id).await;
+                });
+            }
+        }
+    });
+
+    Ok(port)
+}
+
+fn wrap_url(base_url: &str, target: &str, port: u16) -> String {
+    let mut absolute_url = if target.starts_with("http") {
+        target.to_string()
+    } else {
+        match reqwest::Url::parse(base_url) {
+            Ok(base) => base.join(target).map(|u| u.to_string()).unwrap_or_else(|_| target.to_string()),
+            Err(_) => target.to_string(),
+        }
+    };
+
+    if let Ok(base_parsed) = reqwest::Url::parse(base_url) {
+        if let Some(query) = base_parsed.query() {
+            if let Ok(mut abs_parsed) = reqwest::Url::parse(&absolute_url) {
+                if abs_parsed.query().is_none() {
+                    abs_parsed.set_query(Some(query));
+                    absolute_url = abs_parsed.to_string();
+                }
+            }
+        }
+    }
+
+    let encoded = urlencoding::encode(&absolute_url);
+    format!("http://127.0.0.1:{}/?url={}", port, encoded)
+}
+
+fn rewrite_m3u8(text: &str, target_url: &str, port: u16) -> String {
+    let mut rewritten = String::new();
+    let is_master = text.contains("#EXT-X-STREAM-INF");
+    let sub_uri = format!("http://127.0.0.1:{}/?sub=1", port);
+    let sub_media = format!("#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Indonesia\",LANGUAGE=\"id\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{}\"\n", sub_uri);
+    
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+        
+        if trimmed == "#EXTM3U" && is_master {
+            rewritten.push_str(trimmed);
+            rewritten.push('\n');
+            rewritten.push_str(&sub_media);
+            continue;
+        }
+
+        if trimmed.starts_with("#EXT-X-STREAM-INF:") {
+            rewritten.push_str(trimmed);
+            if !trimmed.contains("SUBTITLES=") {
+                rewritten.push_str(",SUBTITLES=\"subs\"");
+            }
+            rewritten.push('\n');
+            continue;
+        }
+
+        if trimmed.starts_with("#EXT-X-MAP:") || trimmed.starts_with("#EXT-X-MEDIA:") {
+            if let Some(uri_pos) = trimmed.find("URI=\"") {
+                let after = &trimmed[uri_pos + 5..];
+                if let Some(uri_end) = after.find('"') {
+                    let map_uri = &after[..uri_end];
+                    let new_uri = wrap_url(target_url, map_uri, port);
+                    rewritten.push_str(&trimmed[..uri_pos]);
+                    rewritten.push_str("URI=\"");
+                    rewritten.push_str(&new_uri);
+                    rewritten.push('"');
+                    rewritten.push_str(&after[uri_end + 1..]);
+                    rewritten.push('\n');
+                    continue;
+                }
+            }
+            rewritten.push_str(trimmed);
+            rewritten.push('\n');
+        } else if trimmed.starts_with('#') {
+            rewritten.push_str(trimmed);
+            rewritten.push('\n');
+        } else {
+            rewritten.push_str(&wrap_url(target_url, trimmed, port));
+            rewritten.push('\n');
+        }
+    }
+    rewritten
+}
+
+async fn handle_connection(socket: &mut TcpStream, port: u16, provider_id: usize) -> anyhow::Result<()> {
+    let mut buf = [0; 4096];
+    let n = tokio::io::AsyncReadExt::read(socket, &mut buf).await?;
+    let request = String::from_utf8_lossy(&buf[..n]);
+    
+    let mut lines = request.lines();
+    let first_line = lines.next().unwrap_or("");
+    let parts: Vec<&str> = first_line.split_whitespace().collect();
+    if parts.len() < 2 || parts[0] != "GET" {
+        return Ok(());
+    }
+
+    let path = parts[1];
+    
+    // Extract Range header if present
+    let mut range_header = None;
+    for line in lines {
+        if line.to_lowercase().starts_with("range:") {
+            range_header = Some(line["range:".len()..].trim().to_string());
+            break;
+        }
+    }
+    
+    if path.starts_with("/?sub=1") {
+        let sub_path = "/sdcard/Download/aniverse_idlix.vtt";
+        let sub_path2 = crate::util::temp_file("aniverse_idlix.vtt");
+        let active_path = if tokio::fs::metadata(sub_path).await.is_ok() { sub_path } else { &sub_path2 };
+        
+        let mut duration = 1440.0;
+        if let Ok(content) = tokio::fs::read_to_string(active_path).await {
+            if let Some(last_arrow) = content.rfind("-->") {
+                let after_arrow = &content[last_arrow + 3..];
+                let end_time_str = after_arrow.split_whitespace().next().unwrap_or("");
+                let parts: Vec<&str> = end_time_str.split(':').collect();
+                if parts.len() == 3 {
+                    let h: f64 = parts[0].parse().unwrap_or(0.0);
+                    let m: f64 = parts[1].parse().unwrap_or(0.0);
+                    let s_parts: Vec<&str> = parts[2].split('.').collect();
+                    let s: f64 = s_parts[0].parse().unwrap_or(0.0);
+                    let ms: f64 = if s_parts.len() > 1 { s_parts[1].parse().unwrap_or(0.0) } else { 0.0 };
+                    let calc = h * 3600.0 + m * 60.0 + s + (ms / 1000.0);
+                    if calc > 0.0 {
+                        duration = calc;
+                    }
+                }
+            }
+        }
+
+        let m3u8_content = format!(
+            "#EXTM3U\n#EXT-X-TARGETDURATION:{}\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:{:.3},\nhttp://127.0.0.1:{}/?vtt=1\n#EXT-X-ENDLIST\n",
+            duration.ceil() as u64, duration, port
+        );
+        let header = "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nConnection: close\r\n\r\n";
+        socket.write_all(header.as_bytes()).await?;
+        socket.write_all(m3u8_content.as_bytes()).await?;
+        return Ok(());
+    }
+
+    if path.starts_with("/?vtt=1") {
+        let sub_path = "/sdcard/Download/aniverse_idlix.vtt";
+        if let Ok(sub_content) = tokio::fs::read_to_string(sub_path).await {
+            let header = "HTTP/1.1 200 OK\r\nContent-Type: text/vtt\r\nConnection: close\r\n\r\n";
+            socket.write_all(header.as_bytes()).await?;
+            socket.write_all(sub_content.as_bytes()).await?;
+        } else {
+            let sub_path2 = crate::util::temp_file("aniverse_idlix.vtt");
+            if let Ok(sub_content) = tokio::fs::read_to_string(&sub_path2).await {
+                let header = "HTTP/1.1 200 OK\r\nContent-Type: text/vtt\r\nConnection: close\r\n\r\n";
+                socket.write_all(header.as_bytes()).await?;
+                socket.write_all(sub_content.as_bytes()).await?;
+            } else {
+                let header = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
+                socket.write_all(header.as_bytes()).await?;
+            }
+        }
+        return Ok(());
+    }
+
+    if !path.starts_with("/?url=") {
+        return Ok(());
+    }
+
+    let encoded_url = &path[6..];
+    let target_url = urlencoding::decode(encoded_url)?.into_owned();
+
+    let mut cmd = tokio::process::Command::new("curl");
+    cmd.args([
+        "-s",
+        "-L",
+        "-A", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ]);
+
+    match provider_id {
+        crate::PROVIDER_OTAKUDESU => {
+            cmd.args(["-e", "https://desustream.net/"]);
+        }
+        crate::PROVIDER_SAMEHADAKU => {
+            cmd.args(["-e", "https://samehadaku.li/"]);
+        }
+        crate::PROVIDER_KUSONIME => {
+            cmd.args(["-e", "https://kusonime.com/"]);
+        }
+        _ => {
+            cmd.args(["-e", "https://z2.idlixku.com/"]);
+            let cookie_path = crate::util::temp_file("aniverse_idlix_cookies.txt");
+            cmd.args(["-b", &cookie_path]);
+        }
+    }
+    
+    if let Some(r) = &range_header {
+        cmd.args(["-H", &format!("Range: {}", r)]);
+    }
+
+    cmd.arg(&target_url);
+    cmd.stdout(std::process::Stdio::piped());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+
+    let mut stdout = child.stdout.take().unwrap();
+    let mut body_bytes = Vec::new();
+    let _ = tokio::io::AsyncReadExt::read_to_end(&mut stdout, &mut body_bytes).await;
+    let _ = child.wait().await;
+
+    let is_m3u8 = body_bytes.starts_with(b"#EXTM3U");
+    let content_type = if is_m3u8 {
+        "application/vnd.apple.mpegurl"
+    } else {
+        "application/octet-stream"
+    };
+
+    let mut header = format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nConnection: close\r\n\r\n", content_type);
+    
+    // Support 206 Partial Content for video segments if Range was requested
+    if !is_m3u8 && range_header.is_some() && !body_bytes.is_empty() {
+        if let Some(r) = &range_header {
+            if let Some(range_val) = r.to_lowercase().strip_prefix("bytes=") {
+                let parts: Vec<&str> = range_val.split('-').collect();
+                let start = parts.first().unwrap_or(&"").parse::<u64>().unwrap_or(0);
+                let end = start + body_bytes.len() as u64 - 1;
+                header = format!("HTTP/1.1 206 Partial Content\r\nContent-Type: {}\r\nContent-Range: bytes {}-{}/*\r\nConnection: close\r\n\r\n", content_type, start, end);
+            }
+        }
+    }
+
+    socket.write_all(header.as_bytes()).await?;
+
+    if is_m3u8 {
+        let text = String::from_utf8_lossy(&body_bytes);
+        let rewritten = rewrite_m3u8(&text, &target_url, port);
+        socket.write_all(rewritten.as_bytes()).await?;
+    } else {
+        socket.write_all(&body_bytes).await?;
+    }
+
+    Ok(())
+}

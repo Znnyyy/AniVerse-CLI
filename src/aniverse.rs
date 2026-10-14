@@ -1,0 +1,215 @@
+use std::{
+    collections::HashMap,
+    io::{stdout, Write},
+};
+
+use colored::Colorize;
+
+use crate::{
+    ext::Ext,
+    input,
+    models::{Episode, Meta, Movie, Stream},
+    util::show_image_thumb,
+};
+
+pub struct AniVerseCli {
+    movie_cache: HashMap<String, Vec<Movie>>,
+    episode_cache: HashMap<String, (Vec<Episode>, Meta)>,
+    stream_cache: HashMap<String, Vec<Stream>>,
+    extractor: Box<dyn Ext>,
+}
+
+impl AniVerseCli {
+    pub fn get_meta(&self, id: &str) -> Option<crate::models::Meta> {
+        self.episode_cache.get(id).map(|(_, m)| m.clone())
+    }
+
+    pub fn get_episode_list(&self, id: &str) -> Option<Vec<Episode>> {
+        self.episode_cache.get(id).map(|(e, _)| e.clone())
+    }
+
+    pub fn new(extractor: Box<dyn Ext>) -> Self {
+        Self {
+            movie_cache: HashMap::new(),
+            episode_cache: HashMap::new(),
+            stream_cache: HashMap::new(),
+            extractor,
+        }
+    }
+
+    pub async fn search(&mut self, search_title: &str) -> anyhow::Result<Option<Movie>> {
+        print!(
+            "{} Proses pencarian '{}'.. ",
+            "◆".blue(),
+            search_title.green()
+        );
+        stdout().flush()?;
+
+        let mut page = 1;
+        let mut is_latest = false;
+        let can_paginate = self.extractor.supports_pagination();
+
+        loop {
+            let cache_key = format!("{}|{}", search_title, page);
+            if !self.movie_cache.contains_key(&cache_key) {
+                let (movie_list, total) = self.extractor.search(search_title.into(), page).await?;
+                if page == 1 && !movie_list.is_empty() {
+                    println!("ditemukan {} judul", total.to_string().green());
+                }
+                self.movie_cache.insert(cache_key.clone(), movie_list);
+            }
+
+            let mut movie_list = self.movie_cache.get(&cache_key).cloned().unwrap_or_default();
+            if movie_list.is_empty() {
+                if page == 1 {
+                    eprintln!(
+                        "tidak ditemukan!\n{} {}",
+                        "✖".red(),
+                        "Silahkan periksa kembali kata kunci pencarian\n".yellow()
+                    );
+                    return Ok(None);
+                }
+                page -= 1;
+                is_latest = true;
+                continue;
+            }
+
+            if page > 1 {
+                movie_list.push(Movie {
+                    id: "1".into(),
+                    title: format!("Sebelumnnya (Halaman {})", page - 1),
+                    total_episodes: None,
+                })
+            }
+
+            if !is_latest && can_paginate {
+                movie_list.push(Movie {
+                    id: "2".into(),
+                    title: format!("Selanjutnya (Halaman {})", page + 1),
+                    total_episodes: None,
+                })
+            }
+            movie_list.push(Movie {
+                id: "0".into(),
+                title: "[ Kembali ke Pencarian ]".into(),
+                total_episodes: None,
+            });
+
+            let movie = match input::choice(movie_list, false)? {
+                Some(m) => m,
+                None => return Ok(None), // Esc → kembali ke input pencarian
+            };
+            if movie.id == "1" {
+                page -= 1;
+            } else if movie.id == "2" {
+                page += 1;
+            } else if movie.id == "0" {
+                return Ok(None);
+            } else {
+                return Ok(Some(movie));
+            }
+        }
+    }
+
+    pub async fn extract_episode(&mut self, movie: Movie) -> anyhow::Result<Option<Episode>> {
+        print!(
+            "{} Memuat daftar episode '{}' .. ",
+            "◆".blue(),
+            movie.title.trim().green()
+        );
+        stdout().flush()?;
+
+        let id = movie.id.clone();
+
+        if !self.episode_cache.contains_key(&id) {
+            let item = self.extractor.get_episodes(movie).await?;
+            self.episode_cache.insert(id.clone(), item);
+        }
+
+        let (episodes, meta) = self.episode_cache.get(&id).unwrap().to_owned();
+        if episodes.is_empty() {
+            println!("tidak berhasil!");
+            return Ok(None);
+        }
+
+        println!("berhasil");
+        println!(
+            "\n  {}{}\n",
+            " ".repeat(45 / 2 - 5),
+            " ✦ Deskripsi ".white().on_truecolor(140, 70, 210)
+        );
+
+        if let Some(ref thumb_url) = meta.thumb_url {
+            show_image_thumb(thumb_url.to_string()).await;
+        }
+
+        let mut has_episode = false;
+        for (k, v) in meta.data {
+            if k.to_lowercase().contains("episode") {
+                has_episode = true;
+            }
+            println!("  {} : {}", k.bright_white(), v);
+        }
+        if !has_episode {
+            println!("  {} : {}", "Episodes".bright_white(), episodes.len());
+        }
+        println!();
+
+        let mut opts = episodes;
+        opts.push(Episode {
+            id: "0".into(),
+            title: "[ Kembali ke Pilih Anime ]".into(),
+            is_series: false,
+        });
+        let selected = match input::choice(opts, true)? {
+            Some(s) => s,
+            None => return Ok(None), // Esc → kembali ke pemilih anime
+        };
+        if selected.id == "0" {
+            Ok(None)
+        } else {
+            Ok(Some(selected))
+        }
+    }
+
+    pub async fn extract_stream_urls(&mut self, episode: Episode) -> anyhow::Result<Option<Stream>> {
+        print!(
+            "{} Memuat server stream '{}' .. ",
+            "◆".blue(),
+            episode.title.trim().green()
+        );
+        stdout().flush()?;
+
+        let id = episode.id.clone();
+        if !self.stream_cache.contains_key(&id) {
+            let streams = self.extractor.get_stream_urls(episode).await?;
+            self.stream_cache.insert(id.clone(), streams);
+        }
+
+        let streams = self.stream_cache.get(&id).unwrap().to_owned();
+        if streams.is_empty() {
+            eprintln!(
+                "gagal!\n{} {}",
+                "✖".red(),
+                "Silahkan jalankan ulang program\n".yellow()
+            );
+            return Ok(None);
+        }
+        println!("berhasil");
+
+        let mut opts = streams;
+        opts.push(Stream {
+            url: "0".into(),
+            title: "[ Kembali ke Pilih Episode ]".into(),
+        });
+        let selected = match input::choice(opts, false)? {
+            Some(s) => s,
+            None => return Ok(None), // Esc → kembali ke pemilih episode
+        };
+        if selected.url == "0" {
+            Ok(None)
+        } else {
+            Ok(Some(selected))
+        }
+    }
+}
