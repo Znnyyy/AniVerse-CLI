@@ -15,11 +15,12 @@ if %ERRORLEVEL% NEQ 0 (
     echo [SKIP] Cargo not found. aniverse-cli may already be removed.
 ) else (
     cargo uninstall animeku-cli >nul 2>&1
-    cargo uninstall aniverse-cli
+    cargo uninstall aniverse-cli >nul 2>&1
+    set UNINST_RC=!ERRORLEVEL!
     if exist "%USERPROFILE%\.cargo\bin\aniverse.exe" del /f /q "%USERPROFILE%\.cargo\bin\aniverse.exe" >nul 2>&1
     if exist "%USERPROFILE%\.cargo\bin\animeku-cli.exe" del /f /q "%USERPROFILE%\.cargo\bin\animeku-cli.exe" >nul 2>&1
     if exist "%USERPROFILE%\.cargo\bin\animeku.exe" del /f /q "%USERPROFILE%\.cargo\bin\animeku.exe" >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
+    if !UNINST_RC! EQU 0 (
         echo [OK] aniverse-cli removed.
     ) else (
         echo [WARN] aniverse-cli was not installed or already removed.
