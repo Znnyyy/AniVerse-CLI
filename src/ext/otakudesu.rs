@@ -1,6 +1,7 @@
 use base64::prelude::*;
 use std::collections::HashMap;
 use async_trait::async_trait;
+use regex::Regex;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde_json::Value;
@@ -26,30 +27,44 @@ impl Otakudesu {
         }
     }
 
-    /// Ambil URL video langsung dari halaman embed (desustream).
+    /// Ambil URL video langsung dari halaman embed mana pun (desustream, vidhide, dll).
     /// Mengembalikan `None` jika halaman embed ternyata maintenance / bukan video,
     /// agar URL halaman HTML tidak sampai dikirim ke pemutar.
     async fn resolve_stream_url(&self, page_url: &str) -> Option<String> {
+        let page_url = clean_url(page_url);
         if page_url.contains("/maintenance") {
             return None;
         }
-        if !page_url.contains("desustream") {
-            return Some(clean_url(page_url));
+        if looks_like_media_url(&page_url) {
+            return Some(page_url);
         }
-        let Ok(resp) = self.client.get(page_url).send().await else {
-            return Some(clean_url(page_url));
+        let Ok(resp) = self.client.get(&page_url).send().await else {
+            return Some(page_url);
         };
         if resp.url().path().contains("/maintenance") {
             return None;
         }
+        let origin = origin_of(resp.url());
         let Ok(text) = resp.text().await else {
-            return Some(clean_url(page_url));
+            return Some(page_url);
         };
-        match parse_embed_url(&text) {
-            Some(url) => Some(url),
-            None if text.to_lowercase().contains("maintenance") => None,
-            None => Some(clean_url(page_url)),
+        if let Some(found) = parse_embed_url(&text) {
+            return Some(found);
         }
+        if text.contains("eval(function(p,a,c,k,e,d)") {
+            if let Some(unpacked) = unpack_packed_js(&text) {
+                if let Some(found) = parse_vidhide_url(&unpacked, &origin) {
+                    return Some(found);
+                }
+                if let Some(found) = parse_embed_url(&unpacked) {
+                    return Some(found);
+                }
+            }
+        }
+        if text.to_lowercase().contains("maintenance") {
+            return None;
+        }
+        Some(page_url)
     }
 }
 
@@ -79,6 +94,77 @@ fn parse_embed_url(text: &str) -> Option<String> {
         if let Some(end) = rest.find('"') {
             return Some(clean_url(&rest[..end]));
         }
+    }
+    None
+}
+
+/// URL yang sudah pasti file media sehingga bisa langsung diputar tanpa fetch halaman.
+fn looks_like_media_url(url: &str) -> bool {
+    let u = url.to_lowercase();
+    u.contains(".m3u8") || u.contains(".mp4") || u.contains(".mpd") || u.contains(".webm") || u.contains("videoplayback")
+}
+
+/// Ambil origin (`scheme://host`) dari URL untuk merelatifkan path embed.
+fn origin_of(url: &reqwest::Url) -> String {
+    match url.host_str() {
+        Some(host) => format!("{}://{}", url.scheme(), host),
+        None => String::new(),
+    }
+}
+
+/// Buka JavaScript yang di-pack gaya Dean Edwards:
+/// `eval(function(p,a,c,k,e,d){...}('payload',base,count,'dict'.split('|')))`.
+/// Token di payload adalah angka berbasis `base` yang dipetakan ke `dict`,
+/// persis seperti unpacker aslinya di browser.
+fn unpack_packed_js(text: &str) -> Option<String> {
+    let re = Regex::new(
+        r"eval\(function\(p,a,c,k,e,d\)\{[^}]*\}\('((?:[^'\\]|\\.)*)',(\d+),(\d+),'((?:[^'\\]|\\.)*)'\.split\('\|'\)\)",
+    )
+    .ok()?;
+    let caps = re.captures(text)?;
+    let payload = caps[1].replace("\\'", "'").replace("\\\"", "\"").replace("\\\\", "\\");
+    let base: u32 = caps[2].parse().ok()?;
+    let count: usize = caps[3].parse().ok()?;
+    let dict: Vec<&str> = caps[4].split('|').collect();
+
+    let token_re = Regex::new(r"\b[0-9a-z]+\b").ok()?;
+    let mut out = String::with_capacity(payload.len() * 3);
+    let mut last = 0;
+    for m in token_re.find_iter(&payload) {
+        out.push_str(&payload[last..m.start()]);
+        let tok = m.as_str();
+        match u32::from_str_radix(tok, base) {
+            Ok(i) if (i as usize) < count && (i as usize) < dict.len() && !dict[i as usize].is_empty() => {
+                out.push_str(dict[i as usize]);
+            }
+            _ => out.push_str(tok),
+        }
+        last = m.end();
+    }
+    out.push_str(&payload[last..]);
+    Some(out)
+}
+
+/// Ekstrak URL stream dari JS player yang sudah di-unpack (gaya VidHide/EarnVids).
+/// Ikuti preferensi player (`hls4 || hls3 || hls2`) tapi utamakan yang absolut
+/// dan tidak bergantung pada referer.
+fn parse_vidhide_url(unpacked: &str, origin: &str) -> Option<String> {
+    for key in ["\"hls4\":\"", "\"hls2\":\"", "\"hls3\":\"", "\"file\":\""] {
+        let Some(pos) = unpacked.find(key) else {
+            continue;
+        };
+        let rest = &unpacked[pos + key.len()..];
+        let Some(end) = rest.find('"') else {
+            continue;
+        };
+        let value = clean_url(&rest[..end]);
+        if value.is_empty() {
+            continue;
+        }
+        if value.starts_with('/') {
+            return Some(format!("{}{}", origin, value));
+        }
+        return Some(value);
     }
     None
 }
@@ -347,5 +433,52 @@ mod tests {
     #[test]
     fn parse_embed_url_returns_none_when_absent() {
         assert_eq!(parse_embed_url("<html>tidak ada video di sini</html>"), None);
+    }
+
+    #[test]
+    fn unpack_packed_js_decodes_tokens() {
+        let mut words: Vec<&str> = vec![""; 52];
+        words[11] = "var"; // token "b" (base 36)
+        words[50] = "https"; // token "1e"
+        words[51] = "hls"; // token "1f"
+        let dict = words.join("|");
+        let text = format!(
+            "eval(function(p,a,c,k,e,d){{while(c--)if(k[c])p=p.replace(new RegExp('x'),'y');return p}}('b x={{\\\"1f\\\":\\\"1e\\\"}};',36,52,'{}'.split('|')))",
+            dict
+        );
+        let out = unpack_packed_js(&text).unwrap();
+        assert_eq!(out, "var x={\"hls\":\"https\"};");
+    }
+
+    #[test]
+    fn unpack_packed_js_returns_none_for_plain_html() {
+        assert_eq!(unpack_packed_js("<html>biasa saja</html>"), None);
+    }
+
+    #[test]
+    fn parse_vidhide_url_prefers_hls4_and_absolutizes() {
+        let js = r#"var links={"hls4":"/stream/abc/master.m3u8","hls3":"https://cdn.x/master.txt","hls2":"https://cdn.y/master.m3u8"};"#;
+        assert_eq!(
+            parse_vidhide_url(js, "https://odvidhide.com").unwrap(),
+            "https://odvidhide.com/stream/abc/master.m3u8"
+        );
+    }
+
+    #[test]
+    fn parse_vidhide_url_falls_back_to_hls2_when_hls4_absent() {
+        let js = r#"var links={"hls3":"https://cdn.x/master.txt","hls2":"https://cdn.y/master.m3u8?t=1"};"#;
+        assert_eq!(
+            parse_vidhide_url(js, "https://odvidhide.com").unwrap(),
+            "https://cdn.y/master.m3u8?t=1"
+        );
+        assert_eq!(parse_vidhide_url("var x = 1;", "https://o.com"), None);
+    }
+
+    #[test]
+    fn looks_like_media_url_detects_direct_streams() {
+        assert!(looks_like_media_url("https://cdn.x/v.mp4"));
+        assert!(looks_like_media_url("https://hls.y/master.m3u8?token=1"));
+        assert!(looks_like_media_url("https://rr1.googlevideo.com/videoplayback?x=1"));
+        assert!(!looks_like_media_url("https://odvidhide.com/embed/bx0ljgg81ofp"));
     }
 }
