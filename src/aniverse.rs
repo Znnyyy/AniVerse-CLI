@@ -191,7 +191,8 @@ impl AniVerseCli {
             eprintln!(
                 "gagal!\n{} {}",
                 "✖".red(),
-                "Silahkan jalankan ulang program\n".yellow()
+                "Server stream kosong (kemungkinan sedang maintenance). Coba lagi nanti.\n"
+                    .yellow()
             );
             return Ok(None);
         }

@@ -27,18 +27,29 @@ impl Otakudesu {
     }
 
     /// Ambil URL video langsung dari halaman embed (desustream).
-    /// Jika bukan halaman yang dikenali atau gagal diekstrak, kembalikan `page_url` apa adanya.
-    async fn resolve_stream_url(&self, page_url: &str) -> String {
+    /// Mengembalikan `None` jika halaman embed ternyata maintenance / bukan video,
+    /// agar URL halaman HTML tidak sampai dikirim ke pemutar.
+    async fn resolve_stream_url(&self, page_url: &str) -> Option<String> {
+        if page_url.contains("/maintenance") {
+            return None;
+        }
         if !page_url.contains("desustream") {
-            return clean_url(page_url);
+            return Some(clean_url(page_url));
         }
         let Ok(resp) = self.client.get(page_url).send().await else {
-            return clean_url(page_url);
+            return Some(clean_url(page_url));
         };
+        if resp.url().path().contains("/maintenance") {
+            return None;
+        }
         let Ok(text) = resp.text().await else {
-            return clean_url(page_url);
+            return Some(clean_url(page_url));
         };
-        parse_embed_url(&text).unwrap_or_else(|| clean_url(page_url))
+        match parse_embed_url(&text) {
+            Some(url) => Some(url),
+            None if text.to_lowercase().contains("maintenance") => None,
+            None => Some(clean_url(page_url)),
+        }
     }
 }
 
@@ -212,11 +223,12 @@ impl Ext for Otakudesu {
         }
 
         if let Some(url) = default_url {
-            let url = self.resolve_stream_url(&url).await;
-            streams.push(Stream {
-                url,
-                title: "Default".to_string(),
-            });
+            if let Some(url) = self.resolve_stream_url(&url).await {
+                streams.push(Stream {
+                    url,
+                    title: "Default".to_string(),
+                });
+            }
         }
 
         let params = [("action", "aa1208d27f29ca340c92c66d1926f13f")];
@@ -266,11 +278,12 @@ impl Ext for Otakudesu {
                                         if url.starts_with("//") {
                                             url = format!("https:{}", url);
                                         }
-                                        let url = self.resolve_stream_url(&url).await;
-                                        streams.push(Stream {
-                                            url,
-                                            title: format!("Mirror - {}", name),
-                                        });
+                                        if let Some(url) = self.resolve_stream_url(&url).await {
+                                            streams.push(Stream {
+                                                url,
+                                                title: format!("Mirror - {}", name),
+                                            });
+                                        }
                                     }
                                 }
                             }

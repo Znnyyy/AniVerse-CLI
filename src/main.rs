@@ -1017,6 +1017,15 @@ async fn execute_player(req: PlayRequest<'_>) -> anyhow::Result<PlayOutcome> {
     let provider_type = req.provider_type;
     let start_seconds = req.start_seconds;
 
+    if stream_url.contains("/maintenance") {
+        println!(
+            "{} Server stream sedang maintenance. Pilih server lain atau coba lagi nanti.",
+            "✖".red()
+        );
+        wait_enter();
+        return Ok(PlayOutcome::Cancelled);
+    }
+
     println!("{} Membuka tautan diaplikasi eksternal .. ", "◆".blue());
     stdout().flush()?;
 
