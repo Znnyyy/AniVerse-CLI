@@ -128,7 +128,7 @@ echo.
 echo [4/4] Installing aniverse-cli...
 echo.
 
-cargo install --git https://github.com/yuutaa7x/AniVerse-CLI
+cargo install --git https://github.com/Znnyyy/AniVerse-CLI
 
 if %ERRORLEVEL% EQU 0 (
     if exist "%USERPROFILE%\.cargo\bin\aniverse-cli.exe" (

@@ -17,7 +17,7 @@ echo "[2/4] Menginstall Dependensi (Rust)..."
 pkg install rust binutils pkg-config openssl -y
 
 echo "[3/4] Build & Install aniverse-cli..."
-cargo install --git https://github.com/yuutaa7x/AniVerse-CLI
+cargo install --git https://github.com/Znnyyy/AniVerse-CLI
 
 echo "Mengatur PATH agar aniverse-cli bisa langsung dijalankan..."
 if [[ ":$PATH:" != *":$HOME/.cargo/bin:"* ]]; then

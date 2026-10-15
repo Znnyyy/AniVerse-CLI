@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
-PackageIdentifier: Yuutaa7x.AniVerse-CLI
+PackageIdentifier: Znnyyy.AniVerse-CLI
 PackageVersion: 0.3.0
 InstallerType: zip
 NestedInstallerType: portable
@@ -8,7 +8,7 @@ NestedInstallerFiles:
     PortableCommandAlias: aniverse-cli
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/yuutaa7x/AniVerse-CLI/releases/download/v0.3.0/aniverse-cli-windows-x86_64.zip
+    InstallerUrl: https://github.com/Znnyyy/AniVerse-CLI/releases/download/v0.3.0/aniverse-cli-windows-x86_64.zip
     InstallerSha256: ISI_DENGAN_SHA256_HASIL_RELEASE
 ManifestType: installer
 ManifestVersion: 1.9.0

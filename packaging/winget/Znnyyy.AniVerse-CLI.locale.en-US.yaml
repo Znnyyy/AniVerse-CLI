@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.9.0.schema.json
-PackageIdentifier: Yuutaa7x.AniVerse-CLI
+PackageIdentifier: Znnyyy.AniVerse-CLI
 PackageVersion: 0.3.0
 PackageLocale: en-US
-Publisher: yuutaa7x
+Publisher: Znnyyy
 PackageName: AniVerse-CLI
-PackageUrl: https://github.com/yuutaa7x/AniVerse-CLI
+PackageUrl: https://github.com/Znnyyy/AniVerse-CLI
 ShortDescription: AniVerse-CLI - terminal anime & movie streaming (Idlix, Otakudesu, Samehadaku, Kusonime) with MPV/VLC playback.
 ManifestType: defaultLocale
 ManifestVersion: 1.9.0

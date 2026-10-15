@@ -107,7 +107,7 @@ pub fn clearscreen_and_show_banner() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION"),
         "AniVerse-CLI".bright_magenta().bold(),
         "©".cyan(),
-        "by Yuutaa7x".bright_black()
+        "by Znnyyy".bright_black()
     );
     eprintln!();
     Ok(())

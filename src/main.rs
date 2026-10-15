@@ -50,7 +50,7 @@ fn provider_name(provider_type: usize) -> &'static str {
     }
 }
 
-const REPO_URL: &str = "https://github.com/yuutaa7x/AniVerse-CLI";
+const REPO_URL: &str = "https://github.com/Znnyyy/AniVerse-CLI";
 const MENU_UPDATE: usize = 0;
 const MENU_WATCH: usize = 1;
 const MENU_HEALTH: usize = 2;

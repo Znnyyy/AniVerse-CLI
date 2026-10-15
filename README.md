@@ -24,7 +24,7 @@
 Buka **PowerShell** atau **CMD** lalu jalankan perintah berikut:
 
 ```powershell
-powershell -c "irm https://raw.githubusercontent.com/yuutaa7x/AniVerse-CLI/refs/heads/main/install.bat -OutFile install.bat; .\install.bat"
+powershell -c "irm https://raw.githubusercontent.com/Znnyyy/AniVerse-CLI/refs/heads/main/install.bat -OutFile install.bat; .\install.bat"
 ```
 
 #### Auto Install (Linux / macOS — satu baris)
@@ -32,7 +32,7 @@ powershell -c "irm https://raw.githubusercontent.com/yuutaa7x/AniVerse-CLI/refs/
 Buka terminal lalu jalankan:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/yuutaa7x/AniVerse-CLI/refs/heads/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/Znnyyy/AniVerse-CLI/refs/heads/main/install.sh | bash
 ```
 
 Script akan otomatis menginstall Rust dan MPV jika belum ada, lalu build dan install AniVerse-CLI.
@@ -42,7 +42,7 @@ Script akan otomatis menginstall Rust dan MPV jika belum ada, lalu build dan ins
 Buka aplikasi Termux lalu jalankan script dibawah ini untuk auto-install:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/yuutaa7x/AniVerse-CLI/refs/heads/main/install_termux.sh | bash
+curl -sL https://raw.githubusercontent.com/Znnyyy/AniVerse-CLI/refs/heads/main/install_termux.sh | bash
 ```
 
 Tunggu instalasi selesai, dan jangan lupa download VLC for Android di Play Store terlebih dahulu sebelum menginstall/sebelum nonton
@@ -51,7 +51,7 @@ Tunggu instalasi selesai, dan jangan lupa download VLC for Android di Play Store
 
 *Copy paste* perintah berikut:
 ```bash
-cargo install --git https://github.com/yuutaa7x/AniVerse-CLI
+cargo install --git https://github.com/Znnyyy/AniVerse-CLI
 ```
 
 Silahkan tunggu proses penginstallan selesai dan jika sudah, ketik `aniverse-cli` untuk menjalankannya.
@@ -67,13 +67,13 @@ AniVerse-CLI portable — cukup salin satu file binary hasil build (`target\rele
 Buka **PowerShell** atau **CMD** lalu jalankan perintah berikut:
 
 ```powershell
-powershell -c "irm https://raw.githubusercontent.com/yuutaa7x/AniVerse-CLI/refs/heads/main/uninstall.bat -OutFile uninstall.bat; .\uninstall.bat"
+powershell -c "irm https://raw.githubusercontent.com/Znnyyy/AniVerse-CLI/refs/heads/main/uninstall.bat -OutFile uninstall.bat; .\uninstall.bat"
 ```
 
 #### Auto Uninstall (Linux / macOS / Termux — satu baris)
 
 ```bash
-curl -sL https://raw.githubusercontent.com/yuutaa7x/AniVerse-CLI/refs/heads/main/uninstall.sh | bash
+curl -sL https://raw.githubusercontent.com/Znnyyy/AniVerse-CLI/refs/heads/main/uninstall.sh | bash
 ```
 
 #### Manual Uninstall (semua platform)

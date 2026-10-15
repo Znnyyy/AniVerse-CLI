@@ -43,7 +43,7 @@ echo ""
 
 # Install aniverse-cli
 echo "[3/3] Installing aniverse-cli..."
-cargo install --git https://github.com/yuutaa7x/AniVerse-CLI
+cargo install --git https://github.com/Znnyyy/AniVerse-CLI
 
 if [ $? -eq 0 ]; then
     echo ""
